@@ -12,7 +12,7 @@
 #include <sys/time.h>
 #include <math.h>
 
-#define DEBUG
+//#define DEBUG
 #include <protocol.h>
 #include <calclib.h>
 #define MAX_RETRIES 3
