@@ -1,7 +1,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
-
+#include <sys/socket.h> 
+#include <arpa/inet.h> 
+#include <netinet/in.h>
+#include <strings.h>
+#include <sys/types.h>
+#include <netdb.h>
 /* Here we use " as the calcLib.c and calcLib.h files are in the same folder, and are to be BUILT
    to into a library, that will be included in other files. 
 
@@ -53,6 +58,131 @@ char *randomType(void){
   return(arith[itemPos]);
   
 };
+
+int check_desthost(char *Desthost) {
+    struct sockaddr_in sa;
+    struct sockaddr_in6 ipv6_sa;
+    struct addrinfo hints, *res;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_DGRAM;
+
+    if (inet_pton(AF_INET, Desthost, &(sa.sin_addr)) == 1) {
+        return 1;
+    } else if (inet_pton(AF_INET6, Desthost, &(ipv6_sa.sin6_addr)) == 1) {
+        return 2;
+    } else if (getaddrinfo(Desthost, NULL, &hints, &res) == 0) {
+        freeaddrinfo(res);
+        return 3;
+    }
+    return 0;
+}
+int connect_sock(int address_type, char*Desthost, char *Destport, int port, int is_server){
+   int sock=-1;
+   
+    if (address_type == 0) {
+        printf("Invalid IP address type\n");
+        return -1;
+    }
+   if (address_type == 1) { // IPv4
+        struct sockaddr_in addr;
+        sock = socket(AF_INET, SOCK_DGRAM, 0);
+        if (sock < 0) {
+            perror("Cannot create IPv4 socket");
+            return -1;
+        }
+
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(port);
+        if (inet_pton(AF_INET, Desthost, &addr.sin_addr) <= 0) {
+            perror("Invalid IPv4 address");
+            close(sock);
+            return -1;
+        }
+
+        if (is_server) {
+            if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+                perror("Bind failed");
+                close(sock);
+                return -1;
+            }
+        } else {
+            if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+                perror("Connect failed");
+                close(sock);
+                return -1;
+            }
+        }
+
+    } else if (address_type == 2) { // IPv6
+        struct sockaddr_in6 addr6;
+        memset(&addr6, 0, sizeof(addr6));
+
+        sock = socket(AF_INET6, SOCK_DGRAM, 0);
+        if (sock < 0) {
+            perror("Cannot create IPv6 socket");
+            return -1;
+        }
+
+        addr6.sin6_family = AF_INET6;
+        addr6.sin6_port = htons(port);
+        if (inet_pton(AF_INET6, Desthost, &addr6.sin6_addr) <= 0) {
+            perror("Invalid IPv6 address");
+            close(sock);
+            return -1;
+        }
+
+        if (is_server) {
+            if (bind(sock, (struct sockaddr *)&addr6, sizeof(addr6)) < 0) {
+                perror("Bind failed");
+                close(sock);
+                return -1;
+            }
+        } else {
+            if (connect(sock, (struct sockaddr *)&addr6, sizeof(addr6)) < 0) {
+                perror("Connect failed");
+                close(sock);
+                return -1;
+            }
+        }
+
+    } else if (address_type == 3) { // Hostname
+        struct addrinfo hints, *res, *rp;
+        memset(&hints, 0, sizeof(hints));
+        hints.ai_family = AF_UNSPEC;
+        hints.ai_socktype = SOCK_DGRAM;
+
+        int status = getaddrinfo(Desthost, Destport, &hints, &res);
+        if (status != 0) {
+            fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(status));
+            return -1;
+        }
+
+        for (rp = res; rp != NULL; rp = rp->ai_next) {
+            sock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+            if (sock < 0) continue;
+
+            if (is_server) {
+                if (bind(sock, rp->ai_addr, rp->ai_addrlen) == 0) break;
+            } else {
+                if (connect(sock, rp->ai_addr, rp->ai_addrlen) == 0) break;
+            }
+
+            close(sock);
+            sock = -1;
+        }
+
+        if (rp == NULL) {
+            fprintf(stderr, "Unable to attach to any address\n");
+            freeaddrinfo(res);
+            return -1;
+        }
+
+        freeaddrinfo(res);
+    }
+
+    return sock;
+}
 
 
 int randomInt(void){

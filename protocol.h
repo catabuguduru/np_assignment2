@@ -48,10 +48,7 @@ struct  __attribute__((__packed__)) calcMessage {
 2 - sub
 3 - mul
 4 - div
-5 - fadd
-6 - fsub
-7 - fmul
-8 - fdiv
+f1
 
 other numbers are reserved
 

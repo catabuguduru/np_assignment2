@@ -26,7 +26,8 @@ Implementation in calcLib.c
   char* randomType(void); // Return a string to an mathematical operator
   int randomInt(void);// Return a random integer, between 0 and 100. 
   double randomFloat(void);// Return a random float between 0.0 and 100.0
-
+  int check_desthost(char*);
+  int connect_sock(int,char*,char*,int,int);
 
 #endif
 

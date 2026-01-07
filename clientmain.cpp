@@ -14,7 +14,7 @@
 
 #define DEBUG
 #include <protocol.h>
-
+#include <calclib.h>
 #define MAX_RETRIES 3
 
 int sock;
@@ -72,24 +72,7 @@ void set_timer() {
 }
 
 // Function to check the destination host type
-int check_desthost(char *Desthost) {
-    struct sockaddr_in sa;
-    struct sockaddr_in6 ipv6_sa;
-    struct addrinfo hints, *res;
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_DGRAM;
 
-    if (inet_pton(AF_INET, Desthost, &(sa.sin_addr)) == 1) {
-        return 1;
-    } else if (inet_pton(AF_INET6, Desthost, &(ipv6_sa.sin6_addr)) == 1) {
-        return 2;
-    } else if (getaddrinfo(Desthost, NULL, &hints, &res) == 0) {
-        freeaddrinfo(res);
-        return 3;
-    }
-    return 0;
-}
 
 int main(int argc, char *argv[]) {
     char *input = argv[1];
@@ -100,89 +83,19 @@ int main(int argc, char *argv[]) {
     }
 
     *port_no = '\0';
-
     char *Desthost = input;
     char *Destport = port_no + 1;
     int port = atoi(Destport);
     printf("Host %s, and port %d.\n", Desthost, port);
-
+    int address_type = check_desthost(Desthost);
+    sock = connect_sock(address_type, Desthost, Destport,port,0);
+    if(sock < 1){
+        printf("failed to connect to the address\n");
+        return EXIT_FAILURE;
+    }
 #ifdef DEBUG
     printf("Connected to %s:%d and local.\n", Desthost, port);
 #endif
-
-    int address_type = check_desthost(Desthost);
-    if (address_type == 0) {
-        printf("Invalid IP address\n");
-        return 1;
-    }
-
-    if (address_type == 1) {
-        struct sockaddr_in client;
-        sock = socket(AF_INET, SOCK_DGRAM, 0);
-        if (sock < 0) {
-            perror("Cannot create socket with IPv4 address");
-            return 1;
-        }
-
-        client.sin_family = AF_INET;
-        client.sin_port = htons(port);
-        client.sin_addr.s_addr = inet_addr(Desthost);
-
-        if (connect(sock, (struct sockaddr *) &client, sizeof(client)) < 0) {
-            perror("Connection failed");
-            close(sock);
-            return 1;
-        }
-    } else if (address_type == 2) {
-        struct sockaddr_in6 client;
-        memset(&client, 0, sizeof(client));
-
-        sock = socket(AF_INET6, SOCK_DGRAM, 0);
-        if (sock < 0) {
-            perror("Cannot create socket with IPv6 address");
-            return 1;
-        }
-        client.sin6_family = AF_INET6;
-        client.sin6_port = htons(port);
-        if (connect(sock, (struct sockaddr *) &client, sizeof(client)) < 0) {
-            perror("Connection failed with the address");
-            close(sock);
-            return 1;
-        }
-    } else if (address_type == 3) {
-        struct addrinfo hints, *res, *rp;
-
-        memset(&hints, 0, sizeof(hints));
-        hints.ai_family = AF_UNSPEC;    // IPv4 or IPv6
-        hints.ai_socktype = SOCK_DGRAM;
-
-        int status = getaddrinfo(Desthost, Destport, &hints, &res);
-        if (status != 0) {
-            fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(status));
-            return 1;
-        }
-
-        for (rp = res; rp != NULL; rp = rp->ai_next) {
-            sock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-            if (sock < 0) {
-                continue;
-            }
-
-            if (connect(sock, rp->ai_addr, rp->ai_addrlen) == 0) {
-                printf("Connected to host %s\n", Desthost);
-                break;
-            }
-            close(sock);
-        }
-
-        if (rp == NULL) {
-            fprintf(stderr, "Check your DNS name, unable to attach to any address\n");
-            freeaddrinfo(res);
-            return 1;
-        }
-        freeaddrinfo(res);
-    }
-  
     // Prepare the calcMessage to be sent
     calcMsg.type = htons(22);
     calcMsg.message = htonl(0);
@@ -196,30 +109,23 @@ int main(int argc, char *argv[]) {
     // Send the calcMessage
     last_message_type = 0;  // calcMessage is the current message type
     retries = 0;
-    set_timer();
     send_calcMsg();
+    set_timer();
    
-
-
     // Receive the response from the server
     struct itimerval zero_timer = {{0, 0}, {0, 0}};
     ssize_t received_bytes = recvfrom(sock, &response_message, sizeof(response_message), 0, NULL, NULL);
 
     if (received_bytes > 0) {
        setitimer(ITIMER_REAL, &zero_timer, NULL);
-    }
-
-    // Cancel the timer since we received a response
-   
-    
+    } 
 
     // Check if the server responds with type = 2 and terminate
     if (ntohs(response_message.type) == 2) {
-        printf("Server responded with NOT OK. Terminating.\n");
+        printf("Server responded with NOT OK\n");
         close(sock);
         return EXIT_FAILURE;
     }
-
     uint32_t n = ntohl(response_message.arith);
     int32_t i1 = ntohl(response_message.inValue1);
     int32_t i2 = ntohl(response_message.inValue2);
@@ -228,20 +134,22 @@ int main(int argc, char *argv[]) {
 
     double fresult = 0.0;
     int iresult = 0;
+    int type;
 
     if (n == 1 || n == 2 || n == 3 || n == 4) {
-        printf("Assignment: i1: %d, i2:%d, ", i1, i2);
+        type = 1;
+        printf("Assignment: ");
         if (n == 1) {
-            printf("add\n");
+            printf("add %d %d\n ", i1, i2);
             iresult = i1 + i2;
         } else if (n == 2) {
-            printf("sub\n");
+            printf("sub %d %d\n ", i1, i2);
             iresult = i1 - i2;
         } else if (n == 3) {
-            printf("mul\n");
+            printf("mul %d %d\n ", i1, i2);
             iresult = i1 * i2;
         } else {
-            printf("div\n");
+            printf("div %d %d\n ", i1, i2);
             if (i2 != 0)
                 iresult = i1 / i2;
             else
@@ -249,18 +157,19 @@ int main(int argc, char *argv[]) {
         }
 
     } else if (n == 5 || n == 6 || n == 7 || n == 8) {
-        printf("Assignment f1: %8.8g, f2:%8.8g, ", f1, f2);
+        type = 2;
+        printf("Assignment ");
         if (n == 5) {
-            printf("fadd\n");
+            printf("fadd %8.8g %8.8g\n", f1, f2);
             fresult = f1 + f2;
         } else if (n == 6) {
-            printf("fsub\n");
+            printf("fsub %8.8g %8.8g\n", f1, f2);
             fresult = f1 - f2;
         } else if (n == 7) {
-            printf("fmul\n");
+            printf("fmul %8.8g %8.8g\n", f1, f2);
             fresult = f1 * f2;
         } else {
-            printf("fdiv\n");
+            printf("fdiv %8.8g %8.8g\n", f1, f2);
             if (f2 != 0)
                 fresult = f1 / f2;
             else
@@ -279,26 +188,33 @@ int main(int argc, char *argv[]) {
 
     last_message_type = 1;  // calcProtocol is the current message type
     retries = 0;
+    //sleep(15); //test timeout functionality
     send_calcProt();
     set_timer();
 
     // Receive the final response from the server
     memset(&calcMsg, 0, sizeof(calcMsg));
     received_bytes = recvfrom(sock, &calcMsg, sizeof(calcMsg), 0, NULL, NULL);
-    set_timer();
     if (received_bytes > 0) {
        setitimer(ITIMER_REAL, &zero_timer, NULL);
     }
-
-    // Reset the timer frequency to 0
-   
-   
+  
     // Check the server's reply
+   
+    if (type == 1) {
     if (ntohl(calcMsg.message) == 1) {
-        printf("Server reply: OK\n");
+        printf("OK (myresult=%d)\n", iresult);
     } else if (ntohl(calcMsg.message) == 2) {
-        printf("Server reply: NOT OK\n");
-    }
+        printf("NOT OK\n");
+    } 
+   } else if (type == 2) {
+        if (ntohl(calcMsg.message) == 1) {
+        printf("OK (myresult=%8.8g)\n", fresult);
+    } else if (ntohl(calcMsg.message) == 2) {
+        printf("NOT OK\n");
+    } 
+   }
+   
 
     close(sock);
     return 0;
